@@ -8,7 +8,7 @@ using json = nlohmann::json;
 
 int main() {
     // 1. Initialize the Daemon
-    // This starts the background monitor thread automatically
+    // This starts the background monitor thread automatically. (monitor thread looks for zombie pids)
     JunctionD daemon;
     
     // 2. Setup the HTTP Server
