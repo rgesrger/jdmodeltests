@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -22,13 +23,20 @@ struct Config {
     std::string model_path;
     std::string host = "0.0.0.0";
     int port = 8080;
-    std::string handler_path;       // distilbert_infer binary
-    std::string junction_run_path;  // junction_run binary
+    std::string handler_path;        // distilbert_infer binary (cold path)
+    std::string service_path;        // distilbert_service binary (warm path)
+    std::string junction_run_path;   // junction_run binary
+    int warm_port = 9000;            // port for warm service inside junction
 };
 
 std::string default_handler_path(const char* argv0) {
     std::filesystem::path bin_path = std::filesystem::absolute(argv0).parent_path();
     return (bin_path / "distilbert_infer").string();
+}
+
+std::string default_service_path(const char* argv0) {
+    std::filesystem::path bin_path = std::filesystem::absolute(argv0).parent_path();
+    return (bin_path / "distilbert_service").string();
 }
 
 std::string default_junction_run_path() {
@@ -49,8 +57,12 @@ Config parse_args(int argc, char* argv[]) {
             cfg.port = std::stoi(argv[++i]);
         } else if ((arg == "--handler-path" || arg == "-b") && i + 1 < argc) {
             cfg.handler_path = argv[++i];
+        } else if (arg == "--service-path" && i + 1 < argc) {
+            cfg.service_path = argv[++i];
         } else if (arg == "--junction-run" && i + 1 < argc) {
             cfg.junction_run_path = argv[++i];
+        } else if (arg == "--warm-port" && i + 1 < argc) {
+            cfg.warm_port = std::stoi(argv[++i]);
         } else {
             throw std::runtime_error("Unknown or incomplete argument: " + arg);
         }
@@ -155,6 +167,12 @@ std::string write_temp_config(const std::string& name) {
 
 std::atomic<uint64_t> request_counter{0};
 
+// Track a single warm instance name and simple state.
+struct WarmState {
+    std::string name = "distilbert-warm";
+    bool started = false;
+};
+
 json run_distilbert_once(const Config& cfg, const std::string& ids_str, const std::string& mask_str) {
     std::string instance = "infer_" + std::to_string(request_counter.fetch_add(1));
     std::string cfg_path = write_temp_config(instance);
@@ -183,6 +201,20 @@ json run_distilbert_once(const Config& cfg, const std::string& ids_str, const st
 
     return json::parse(result.stdout_output);
 }
+
+json call_warm_service(const Config& cfg, const std::vector<int64_t>& ids, const std::vector<int64_t>& mask) {
+    httplib::Client cli("192.168.127.7", cfg.warm_port);
+    cli.set_connection_timeout(2, 0);
+    cli.set_read_timeout(10, 0);
+    cli.set_write_timeout(10, 0);
+    json body{{"input_ids", ids}, {"attention_mask", mask}};
+    auto resp = cli.Post("/infer", body.dump(), "application/json");
+    if (!resp) throw std::runtime_error("warm service unreachable");
+    if (resp->status != 200) {
+        throw std::runtime_error("warm service error status " + std::to_string(resp->status));
+    }
+    return json::parse(resp->body);
+}
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -190,6 +222,7 @@ int main(int argc, char* argv[]) {
     try {
         cfg = parse_args(argc, argv);
         if (cfg.handler_path.empty()) cfg.handler_path = default_handler_path(argv[0]);
+        if (cfg.service_path.empty()) cfg.service_path = default_service_path(argv[0]);
         cfg.junction_run_path = default_junction_run_path();
 
         if (!std::filesystem::exists(cfg.handler_path)) {
@@ -198,22 +231,30 @@ int main(int argc, char* argv[]) {
         if (!std::filesystem::exists(cfg.junction_run_path)) {
             throw std::runtime_error("junction_run not found at " + cfg.junction_run_path);
         }
+        if (!std::filesystem::exists(cfg.service_path)) {
+            throw std::runtime_error("distilbert_service not found at " + cfg.service_path);
+        }
     } catch (const std::exception& e) {
         std::cerr << "Usage: " << argv[0]
                   << " --model-path /path/to/distilbert.onnx [--host 0.0.0.0] [--port 8080]"
-                  << " [--handler-path /path/to/distilbert_infer] [--junction-run /path/to/junction_run]\n"
+                  << " [--handler-path /path/to/distilbert_infer] [--service-path /path/to/distilbert_service]"
+                  << " [--junction-run /path/to/junction_run] [--warm-port 9000]\n"
                   << "Error: " << e.what() << "\n";
         return 1;
     }
 
     try {
         std::cout << "Gateway config: model='" << cfg.model_path
-                  << "' handler='" << cfg.handler_path
-                  << "' junction_run='" << cfg.junction_run_path
-                  << "' host=" << cfg.host
-                  << " port=" << cfg.port << std::endl;
+              << "' handler='" << cfg.handler_path
+              << "' service='" << cfg.service_path
+              << "' junction_run='" << cfg.junction_run_path
+              << "' host=" << cfg.host
+              << " port=" << cfg.port
+              << " warm_port=" << cfg.warm_port << std::endl;
 
         JunctionD jd;
+        WarmState warm;
+        std::mutex warm_mtx;
 
         httplib::Server svr;
 
@@ -283,6 +324,7 @@ int main(int argc, char* argv[]) {
             }
         });
 
+        // Cold path: per-request cold start via junction_run
         svr.Post("/infer", [&](const httplib::Request& req, httplib::Response& res) {
             try {
                 auto body = json::parse(req.body);
@@ -318,6 +360,68 @@ int main(int argc, char* argv[]) {
                 std::string mask_str = to_space_separated(attention_mask);
 
                 json resp = run_distilbert_once(cfg, ids_str, mask_str);
+                res.set_content(resp.dump(), "application/json");
+            } catch (const std::exception& e) {
+                res.status = 500;
+                json err{{"error", e.what()}};
+                res.set_content(err.dump(), "application/json");
+            }
+        });
+
+        // Warm path: ensure a long-lived junctiond-managed instance is running distilbert_service, then proxy.
+        svr.Post("/infer_warm", [&](const httplib::Request& req, httplib::Response& res) {
+            try {
+                auto body = json::parse(req.body);
+                if (!body.contains("input_ids") || !body.contains("attention_mask")) {
+                    res.status = 400;
+                    res.set_content("{\"error\":\"input_ids and attention_mask required\"}", "application/json");
+                    return;
+                }
+                const auto& ids_j = body["input_ids"];
+                const auto& mask_j = body["attention_mask"];
+                if (!ids_j.is_array() || !mask_j.is_array()) {
+                    res.status = 400;
+                    res.set_content("{\"error\":\"input_ids and attention_mask must be arrays\"}", "application/json");
+                    return;
+                }
+                if (ids_j.size() != mask_j.size() || ids_j.empty()) {
+                    res.status = 400;
+                    res.set_content("{\"error\":\"input_ids and attention_mask length mismatch or empty\"}", "application/json");
+                    return;
+                }
+
+                // First-time warm start: spawn a junctiond-managed service if not already started.
+                {
+                    std::lock_guard<std::mutex> lk(warm_mtx);
+                    if (!warm.started) {
+                        FunctionData f{};
+                        f.name = warm.name;
+                        f.execpath = cfg.service_path;
+                        std::ostringstream args;
+                        args << "--model-path " << cfg.model_path << " --host 0.0.0.0 --port " << cfg.warm_port;
+                        f.args = args.str();
+                        f.cpu = 2;
+                        f.memoryMB = 512;
+                        bool ok = jd.spawn(f);
+                        if (!ok) {
+                            res.status = 500;
+                            res.set_content("{\"error\":\"failed to spawn warm instance\"}", "application/json");
+                            return;
+                        }
+                        warm.started = true;
+                    }
+                }
+
+                std::vector<int64_t> input_ids;
+                std::vector<int64_t> attention_mask;
+                input_ids.reserve(ids_j.size());
+                attention_mask.reserve(mask_j.size());
+                for (size_t i = 0; i < ids_j.size(); ++i) {
+                    input_ids.push_back(ids_j.at(i).get<int64_t>());
+                    attention_mask.push_back(mask_j.at(i).get<int64_t>());
+                }
+
+                json resp = call_warm_service(cfg, input_ids, attention_mask);
                 res.set_content(resp.dump(), "application/json");
             } catch (const std::exception& e) {
                 res.status = 500;

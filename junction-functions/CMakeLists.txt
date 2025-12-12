@@ -17,9 +17,11 @@ find_package(Threads REQUIRED)
 find_package(onnxruntime REQUIRED)
 
 add_executable(distilbert_infer distilbert_infer.cpp)
+add_executable(distilbert_service distilbert_service.cpp)
 add_executable(gateway gateway.cpp ${CMAKE_CURRENT_LIST_DIR}/../../faasd/junctiond/junctiond.cpp)
 
 target_link_libraries(distilbert_infer PRIVATE onnxruntime::onnxruntime Threads::Threads)
+target_link_libraries(distilbert_service PRIVATE onnxruntime::onnxruntime Threads::Threads)
 target_link_libraries(gateway PRIVATE onnxruntime::onnxruntime Threads::Threads)
 
 # Add junctiond headers (from faasd/junctiond) so gateway can call JunctionD directly.

@@ -1,3 +1,6 @@
+# This doesn't fully work yet!
+# There is currently no way to hit the gateway address from outside the junction instance.
+#
 #!/usr/bin/env bash
 set -euo pipefail
 

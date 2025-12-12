@@ -1,0 +1,1 @@
+./build/gateway --model-path /users/nathanan/C-and-D-final/models/distilbert-finetuned/distilbert.onnx --host 0.0.0.0 --port 8080
