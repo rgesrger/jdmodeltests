@@ -2,9 +2,11 @@
 #include <onnxruntime_cxx_api.h>
 
 #include <iostream>
+#include <array>
 #include <vector>
 #include <string>
 #include <stdexcept>
+#include <sstream>
 #include <cmath>
 
 // Simple softmax over a small vector
@@ -32,14 +34,58 @@ std::string label_from_logits(const std::vector<float>& logits) {
     return logits[1] > logits[0] ? "POSITIVE" : "NEGATIVE";
 }
 
+// Parse a comma- or space-separated list of integers into a vector
+std::vector<int64_t> parse_ids(const std::string& text) {
+    std::vector<int64_t> values;
+    std::string token;
+    std::stringstream ss(text);
+
+    auto push_token = [&](const std::string& t) {
+        if (t.empty()) return;
+        values.push_back(std::stoll(t));
+    };
+
+    while (std::getline(ss, token, ',')) {
+        std::stringstream inner(token);
+        std::string piece;
+        while (inner >> piece) {
+            push_token(piece);
+        }
+    }
+
+    if (values.empty()) {
+        throw std::runtime_error("No ids parsed; provide space or comma separated integers");
+    }
+
+    return values;
+}
+
 int main(int argc, char* argv[]) {
-    if (argc < 2) {
+    // Parse args while allowing an optional --json flag.
+    bool json_output = false;
+    std::vector<std::string> positional;
+    positional.reserve(3);
+
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--json") {
+            json_output = true;
+            continue;
+        }
+        positional.push_back(std::move(arg));
+    }
+
+    if (positional.size() != 3) {
         std::cerr << "Usage: " << argv[0]
-                  << " /path/to/distilbert.onnx\n";
+                  << " /path/to/distilbert.onnx \"input_ids...\" \"attention_mask...\" [--json]\n"
+                  << "Example: " << argv[0]
+                  << " ./distilbert.onnx \"101 2023 3185 2001 2307 102\" \"1 1 1 1 1 1\" --json\n";
         return 1;
     }
 
-    std::string model_path = argv[1];
+    std::string model_path = positional[0];
+    std::string input_ids_raw = positional[1];
+    std::string attention_mask_raw = positional[2];
 
     try {
         // 1. Create environment and session options
@@ -61,7 +107,9 @@ int main(int argc, char* argv[]) {
         for (size_t i = 0; i < num_input_nodes; i++) {
             char* name = session.GetInputNameAllocated(i, allocator).release();
             input_names[i] = name;
-            std::cerr << "Input " << i << " name: " << input_names[i] << "\n";
+            if (!json_output) {
+                std::cerr << "Input " << i << " name: " << input_names[i] << "\n";
+            }
         }
 
         // For DistilBERT SST-2 ONNX exported as described:
@@ -72,25 +120,22 @@ int main(int argc, char* argv[]) {
         for (size_t i = 0; i < num_output_nodes; i++) {
             char* name = session.GetOutputNameAllocated(i, allocator).release();
             output_names[i] = name;
-            std::cerr << "Output " << i << " name: " << output_names[i] << "\n";
+            if (!json_output) {
+                std::cerr << "Output " << i << " name: " << output_names[i] << "\n";
+            }
         }
 
-        // For now, we hard-code a single pre-tokenized example:
-        // Suppose tokenizer("this movie was great") produced something like:
-        // [101, 2023, 3185, 2001, 2307, 102, 0, 0, ...] with padding
-        // In reality, you will compute input_ids & attention_mask in Python
-        // and send them to this program or embed them.
-        const int64_t seq_len = 8;  // small demo; real models use 128, 256, etc.
+        // Parse dynamic inputs (space- or comma-separated integers)
+        std::vector<int64_t> input_ids = parse_ids(input_ids_raw);
+        std::vector<int64_t> attention_mask = parse_ids(attention_mask_raw);
 
-        std::vector<int64_t> input_ids = {
-            101, 2023, 3185, 2001, 2307, 102, 0, 0
-        };
-        std::vector<int64_t> attention_mask = {
-            1, 1, 1, 1, 1, 1, 0, 0
-        };
+        if (input_ids.size() != attention_mask.size()) {
+            throw std::runtime_error("input_ids and attention_mask length mismatch");
+        }
 
-        if (input_ids.size() != seq_len || attention_mask.size() != seq_len) {
-            throw std::runtime_error("Mismatched seq_len in demo input");
+        const int64_t seq_len = static_cast<int64_t>(input_ids.size());
+        if (seq_len == 0) {
+            throw std::runtime_error("Empty input provided");
         }
 
         // 4. Create input tensors
@@ -154,11 +199,27 @@ int main(int argc, char* argv[]) {
         std::vector<float> probs = softmax(logits);
         std::string label = label_from_logits(logits);
 
-        std::cout << "Logits: ";
-        for (float v : logits) std::cout << v << " ";
-        std::cout << "\nProbs: ";
-        for (float p : probs) std::cout << p << " ";
-        std::cout << "\nPredicted label: " << label << "\n";
+        if (json_output) {
+            std::ostringstream os;
+            os << "{\"logits\":[";
+            for (size_t i = 0; i < logits.size(); ++i) {
+                if (i) os << ",";
+                os << logits[i];
+            }
+            os << "],\"probs\":[";
+            for (size_t i = 0; i < probs.size(); ++i) {
+                if (i) os << ",";
+                os << probs[i];
+            }
+            os << "],\"label\":\"" << label << "\"}";
+            std::cout << os.str() << "\n";
+        } else {
+            std::cout << "Logits: ";
+            for (float v : logits) std::cout << v << " ";
+            std::cout << "\nProbs: ";
+            for (float p : probs) std::cout << p << " ";
+            std::cout << "\nPredicted label: " << label << "\n";
+        }
 
         // Free the names we allocated
         for (auto name : input_names) {
