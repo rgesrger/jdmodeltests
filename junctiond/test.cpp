@@ -24,17 +24,29 @@ int main() {
     JunctionD jd;
 
     FunctionData f1 {
-        .name = "func1",
-        .rootfs = "/rootfs",
+        .name = "openssl-bench-small", //model name
+    
+        .execpath = "/usr/bin/openssl", // your binary
+        .args = "speed -seconds 2",
         .cpu = 1,
         .memoryMB = 128
     };
 
     FunctionData f2 {
-        .name = "func2",
-        .rootfs = "/rootfs",
-        .cpu = 2,
-        .memoryMB = 256
+        .name = "openssl-bench-small", //model name
+    
+        .execpath = "/usr/bin/openssl", // your binary
+        .args = "speed -seconds 2",
+        .cpu = 1,
+        .memoryMB = 128
+    };
+
+    FunctionData f3 {
+        .name = "distilbert",
+        .execpath = "/users/nathanan/C-and-D-final/junction-functions/distilbert_infer",
+        .args = "/users/nathanan/C-and-D-final/models/distilbert-finetuned/distilbert.onnx",
+        .cpu = 1,
+        .memoryMB = 128
     };
 
     // Test 1: Spawn first function

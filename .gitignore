@@ -5,3 +5,5 @@ distilbert-finetuned/
 build/
 datasets/
 test/invocation/
+test*
+!test*.cpp

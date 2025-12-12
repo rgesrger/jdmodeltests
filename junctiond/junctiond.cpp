@@ -7,6 +7,9 @@
 #include <cstdlib>
 #include <chrono>
 #include <sys/stat.h>
+#include <cstring>
+#include <sstream>
+#include <cerrno>
 
 JunctionD::JunctionD() {
     monitorThread = std::thread([this]() { 
@@ -14,7 +17,6 @@ JunctionD::JunctionD() {
     });
     monitorThread.detach();
 }
-
 JunctionD::~JunctionD() {
     std::lock_guard<std::mutex> lock(mtx);
     for (auto &kv : statusMap) {
@@ -26,18 +28,57 @@ bool JunctionD::spawn(const FunctionData &func) {
     std::string cfgFile;
     if (!generateConfig(func, cfgFile)) return false;
 
+    // Determine the path to the junction_run executable
     const char* home = std::getenv("HOME");
     std::string junctionRun = std::string(home) + "/junction/build/junction/junction_run";
+    
+    // NOTE: The separate commandline string is still NOT used for execution.
 
     pid_t pid = fork();
-    if (pid < 0) return false;
-    if (pid == 0) {
-        execlp(junctionRun.c_str(), "junction_run", cfgFile.c_str(), nullptr);
-        std::cerr << "[junctiond] Exec failed!" << std::endl;
-        exit(1);
+    if (pid < 0) {
+        std::cerr << "[junctiond] Fork failed: " << strerror(errno) << std::endl;
+        return false;
     }
 
+    if (pid == 0) {
+        // --- CHILD PROCESS: Assemble the command line for execution ---
+        
+        // 1. Start assembling the full list of command arguments.
+        std::vector<std::string> full_cmd_args = {
+            "junction_run",         // Arg 1: The program name
+            cfgFile,                // Arg 2: The config file path
+            "--",                   // Arg 3: The required separator
+            func.execpath           // Arg 4: The executable path inside the container
+        };
+
+        // 2. Split func.args (e.g., "speed type") into separate tokens and append them.
+        std::stringstream ss(func.args);
+        std::string token;
+        while (ss >> token) {
+            full_cmd_args.push_back(token);
+        }
+
+        // 3. Convert to the required char* array for execvp.
+        std::vector<char*> c_args;
+        for (const auto& arg : full_cmd_args) {
+            c_args.push_back(const_cast<char*>(arg.c_str()));
+        }
+        c_args.push_back(nullptr); // The array must be NULL-terminated.
+
+        // 4. Execute using execvp.
+        execvp(junctionRun.c_str(), c_args.data());
+        
+        // execvp only returns if there is an error
+        std::cerr << "[junctiond] Exec failed for " << func.execpath 
+                  << "! Error: " << strerror(errno) << std::endl;
+        exit(1);
+    }
+    
+    // --- PARENT PROCESS: Tracking by func.name (Per your request) ---
     std::lock_guard<std::mutex> lock(mtx);
+    // Assuming statusMap is keyed by std::string and stores FunctionStatus
+    
+    // WARNING: This assumes func.name is unique for now.
     statusMap[func.name] = {func.name, true, pid};
     std::cout << "[junctiond] Spawned " << func.name << " PID " << pid << std::endl;
     return true;
@@ -92,7 +133,6 @@ void JunctionD::monitorInstances() {
 
 bool JunctionD::generateConfig(const FunctionData &func, std::string &cfgPath) {
     std::string name   = func.name.empty() ? "function_default" : func.name;
-    std::string rootfs = func.rootfs.empty() ? "/rootfs" : func.rootfs;
     int cpu            = func.cpu > 0 ? func.cpu : 1;
     int memory         = func.memoryMB > 0 ? func.memoryMB : 128;
 
@@ -120,9 +160,6 @@ bool JunctionD::generateConfig(const FunctionData &func, std::string &cfgPath) {
     cfg << "runtime_priority lc\n";
     cfg << "runtime_quantum_us 0\n";
 
-    // cfg << "rootfs " << rootfs << "\n";
-    // cfg << "cpu " << cpu << "\n";
-    // cfg << "memoryMB " << memory << "\n";
 
     cfg.close();
 

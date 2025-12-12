@@ -9,7 +9,8 @@
 
 struct FunctionData {
     std::string name;
-    std::string rootfs;
+    std::string execpath;
+    std::string args;
     int cpu;
     int memoryMB;
     std::map<std::string, std::string> env;

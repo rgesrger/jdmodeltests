@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package junctiond;
+
+option go_package = "github.com/DonaldLucy/faasd/pkg/junctiond;junctiond";
+
+
+// This defines the public API that Go will call.
+// JunctionD runs locally, so Go talks to it over gRPC.
+// Exactly mirrors the C++ JunctionD class (spawn, remove, list).
+service JunctionService {
+  // Create a new instance of a function (maps to JunctionD::spawn)
+  rpc Spawn (FunctionData) returns (StatusReply);
+
+  // Stop and remove a running instance (maps to JunctionD::remove)
+  rpc Remove (FunctionName) returns (StatusReply);
+
+  // List all currently running instances (maps to JunctionD::list)
+  rpc List (Empty) returns (FunctionList);
+}
+
+message Empty {}
+
+message FunctionData {
+  // Same fields as your C++ FunctionData struct
+  string name = 1;
+  string rootfs = 2;
+  int32 cpu = 3;
+  int32 memoryMB = 4;
+  string execpath = 5;
+  string args = 6;
+}
+
+message FunctionName {
+  string name = 1;
+}
+
+message FunctionStatus {
+  string name = 1;
+  bool running = 2;
+  int32 pid = 3;
+}
+
+message FunctionList {
+  repeated FunctionStatus functions = 1;
+}
+
+message StatusReply {
+  bool success = 1;
+  string message = 2;
+}
