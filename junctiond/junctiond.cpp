@@ -23,49 +23,50 @@ JunctionD::~JunctionD() {
         remove(kv.first);
     }
 }
-
 JobResult JunctionD::collect(std::string name) {
-    // FunctionStatus &status = statusMap[name];
     std::lock_guard<std::mutex> lock(mtx);
+    Job* jobPtr = nullptr;
+    for (auto &j : activeJobs) {
+        if (j.name == name) {
+            jobPtr = &j;
+            break;
+        }
+    }
 
     auto it = statusMap.find(name);
     if (it == statusMap.end()) {
-        std::cerr << "[ERROR] collect(): no entry in statusMap for '" << name << "'\n";
         return {name, "", -1, -1};
     }
 
     FunctionStatus &status = it->second;
-
-    // 2. Validate the FD before reading.
     if (status.fd_read < 3) {
-        std::cerr << "[ERROR] collect(): BAD FD " << status.fd_read << " (expected >=3)\n";
         return {name, "", -1, -1};
     }
-    std::string fullOutput = "";
+
+    std::string fullOutput;
     char buffer[4096];
 
-    std::cout << "[DEBUG] Attempting to read from FD: " << status.fd_read << std::endl;
+    // std::cout << "[DEBUG] Reading from FD " << status.fd_read << std::endl;
 
     while (true) {
         ssize_t bytes = read(status.fd_read, buffer, sizeof(buffer) - 1);
-        
-        if (bytes < 0) {
-            perror("[DEBUG] Read error");
-            break;
-        }
-        if (bytes == 0) {
-            std::cout << "[DEBUG] Pipe closed by child." << std::endl;
-            break;
-        }
 
+        if (bytes <= 0) break;
         buffer[bytes] = '\0';
-        std::cout << "[DEBUG] Read " << bytes << " bytes: " << buffer << std::endl;
+
+        // std::cout << "[DEBUG] bytes=" << bytes << std::endl;
         fullOutput += buffer;
     }
+    if (!jobPtr) {
+        return { name, fullOutput, -1, -1 };
+    }
+    int code;
+    if (waitpid(status.pid, &code, WNOHANG) == status.pid)
+        status.running = false;
 
-    waitpid(status.pid, nullptr, 0); 
     return { name, fullOutput, 0, 0 };
 }
+
 
 bool JunctionD::spawn(const FunctionData &func) {
     // 1. Create the Pipes (The plumbing)
@@ -192,25 +193,28 @@ std::vector<FunctionStatus> JunctionD::list() {
 // This runs in a continuous background loop to clean up dead processes.
 void JunctionD::monitorInstances() {
     while (true) {
-        std::this_thread::sleep_for(std::chrono::seconds(1));
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
         std::lock_guard<std::mutex> lock(mtx);
 
-        for (auto it = statusMap.begin(); it != statusMap.end(); ) {
+        for (auto &it : statusMap) {
+            FunctionStatus &fs = it.second;
+
             int status;
-            pid_t ret = waitpid(it->second.pid, &status, WNOHANG);
-            if (ret > 0) {
-                std::cout << "[junctiond] Instance " << it->second.name << " terminated." << std::endl;
-                if (ret > 0) {
-                    std::cout << "[junctiond] Instance " << it->second.name << " terminated." << std::endl;
-                    it->second.running = false;   // mark as terminated
-                    ++it;                          // DO NOT ERASE HERE
+            pid_t ret = waitpid(fs.pid, &status, WNOHANG);
+
+            if (ret == fs.pid) {
+                if (fs.running) {
+                    std::cout << "[junctiond] Instance '" << fs.name
+                              << "' (PID " << fs.pid << ") terminated.\n";
                 }
-            } else {
-                ++it;
+                fs.running = false;
             }
         }
     }
 }
+
+
 
 bool JunctionD::generateConfig(const FunctionData &func, std::string &cfgPath) {
     std::string name   = func.name.empty() ? "function_default" : func.name;

@@ -51,13 +51,39 @@ int main() {
 
     // Test 1: Spawn first function
     std::cout << "[TEST 1] Spawning func1...\n";
+    // f1.execpath = "/bin/echo";
+    // f1.args = "Hello from Junction";
     if (!jd.spawn(f1)) {
         std::cerr << "[FAIL] Could not spawn func1\n";
         return 1;
     }
-    std::this_thread::sleep_for(std::chrono::seconds(2));
-    printInstances(jd);
+    // std::cout << "spawn 2\n";
+    // jd.spawn(f1);
+    // std::cout << "spawn 3\n";
+    // jd.spawn(f1);
+    // std::this_thread::sleep_for(std::chrono::seconds(2));
+    std::cout << "collecting results for: " << f1.name << std::endl;
+    JobResult result = jd.collect(f1.name);
 
+    std::cout << "Output: " << result.output;
+    std::cout << "Cold Start: " << result.startupSeconds << "s\n";
+    printInstances(jd);
+    // if (!jd.list().empty()) {
+    //     std::cout << "\n[TEST] --------------------------------------\n";
+    //     std::cout << "[TEST] Sending input token '50256' to model...\n";
+        
+    //     // Send input and wait for response
+    //     std::string response = jd.invoke("distilgpt2", "50256");
+
+    //     if (response.find("Error") != std::string::npos) {
+    //          std::cerr << "[FAIL] " << response << "\n";
+    //     } else {
+    //          std::cout << "[SUCCESS] Model Replied:\n" << response << "\n";
+    //     }
+    //     std::cout << "[TEST] --------------------------------------\n";
+    // }
+
+    // return 0;
 
     // // Test 2: Spawn second function
     // std::cout << "[TEST 2] Spawning func2...\n";
