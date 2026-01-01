@@ -24,6 +24,49 @@ JunctionD::~JunctionD() {
     }
 }
 
+JobResult JunctionD::collect(std::string name) {
+    // FunctionStatus &status = statusMap[name];
+    std::lock_guard<std::mutex> lock(mtx);
+
+    auto it = statusMap.find(name);
+    if (it == statusMap.end()) {
+        std::cerr << "[ERROR] collect(): no entry in statusMap for '" << name << "'\n";
+        return {name, "", -1, -1};
+    }
+
+    FunctionStatus &status = it->second;
+
+    // 2. Validate the FD before reading.
+    if (status.fd_read < 3) {
+        std::cerr << "[ERROR] collect(): BAD FD " << status.fd_read << " (expected >=3)\n";
+        return {name, "", -1, -1};
+    }
+    std::string fullOutput = "";
+    char buffer[4096];
+
+    std::cout << "[DEBUG] Attempting to read from FD: " << status.fd_read << std::endl;
+
+    while (true) {
+        ssize_t bytes = read(status.fd_read, buffer, sizeof(buffer) - 1);
+        
+        if (bytes < 0) {
+            perror("[DEBUG] Read error");
+            break;
+        }
+        if (bytes == 0) {
+            std::cout << "[DEBUG] Pipe closed by child." << std::endl;
+            break;
+        }
+
+        buffer[bytes] = '\0';
+        std::cout << "[DEBUG] Read " << bytes << " bytes: " << buffer << std::endl;
+        fullOutput += buffer;
+    }
+
+    waitpid(status.pid, nullptr, 0); 
+    return { name, fullOutput, 0, 0 };
+}
+
 bool JunctionD::spawn(const FunctionData &func) {
     // 1. Create the Pipes (The plumbing)
     int pipe_in[2];  // We write to [1], Child reads from [0]
@@ -33,6 +76,8 @@ bool JunctionD::spawn(const FunctionData &func) {
         perror("[junctiond] Failed to create pipes");
         return false;
     }
+
+    auto startTime = std::chrono::steady_clock::now();
 
     std::string cfgFile;
     if (!generateConfig(func, cfgFile)) return false;
@@ -49,41 +94,35 @@ bool JunctionD::spawn(const FunctionData &func) {
 
     if (pid == 0) {
         // --- CHILD PROCESS ---
-
-        // A. Redirect Standard Input (stdin)
-        // "Make my keyboard input come from the pipe, not the real keyboard"
         dup2(pipe_in[0], STDIN_FILENO);
-
-        // B. Redirect Standard Output (stdout)
-        // "Make my std::cout go to the pipe, not the screen"
         dup2(pipe_out[1], STDOUT_FILENO);
 
-        // C. Redirect Standard Error (stderr) - Optional but recommended
-        // Sometimes you want errors to still go to the real screen so you can debug
-        // dup2(pipe_out[1], STDERR_FILENO); 
-
-        // D. Close all pipe ends (Cleanup)
-        // The child has its copies in STDIN/STDOUT now, it doesn't need the raw FDs
+        // Close all pipe ends
         close(pipe_in[0]);
         close(pipe_in[1]);
         close(pipe_out[0]);
         close(pipe_out[1]);
 
-        // ... Prepare arguments (Your existing logic) ...
-        std::vector<std::string> full_cmd_args = {
-            "junction_run", cfgFile, func.execpath
-        };
+        //  Prepare arguments 
+        std::vector<std::string> full_cmd_args;
+        full_cmd_args.push_back(junctionRun); // junction launcher
+        full_cmd_args.push_back(cfgFile);        // junction config
+        full_cmd_args.push_back("--");           // separator: everything after this runs in Junction
+
+        full_cmd_args.push_back(func.execpath); // path to binary
         std::stringstream ss(func.args);
         std::string token;
-        while (ss >> token) full_cmd_args.push_back(token);
+        while (ss >> token) full_cmd_args.push_back(token); // add args
+
 
         std::vector<char*> c_args;
         for (const auto& arg : full_cmd_args) c_args.push_back(const_cast<char*>(arg.c_str()));
         c_args.push_back(nullptr);
-
+        std::cerr << "[junctiond] EXECUTING:";
+        for (auto &a : full_cmd_args) std::cerr << " " << a;
+        std::cerr << std::endl;
         // Execute
         execvp(junctionRun.c_str(), c_args.data());
-        
         std::cerr << "[junctiond] Exec failed: " << strerror(errno) << std::endl;
         exit(1);
     }
@@ -97,18 +136,26 @@ bool JunctionD::spawn(const FunctionData &func) {
     close(pipe_out[1]);
 
     std::lock_guard<std::mutex> lock(mtx);
+
+    // Ensure we are not overwriting an existing entry
+    auto res = statusMap.insert({func.name, FunctionStatus()});
+    FunctionStatus &status = res.first->second;
+
+    status.name     = func.name;
+    status.pid      = pid;
+    status.fd_write = pipe_in[1];
+    status.fd_read  = pipe_out[0];
+    status.running  = true;
     
-    // B. Save the File Descriptors so invoke() can use them!
-    // You must update your 'FunctionStatus' struct to hold these ints.
-    FunctionStatus status;
-    status.name = func.name;
-    status.running = true;
-    status.pid = pid;
+    Job newJob;
+    newJob.name = func.name;
+    newJob.pid = pid;
+    newJob.fd_write = status.fd_write;
+    newJob.fd_read = status.fd_read;
+    newJob.startTime = startTime;
+    activeJobs.push_back(newJob);
     
-    status.fd_write = pipe_in[1];  // <--- SAVE THIS (Input)
-    status.fd_read  = pipe_out[0]; // <--- SAVE THIS (Output)
     
-    statusMap[func.name] = status;
     std::cout << "[junctiond] Spawned " << func.name << " PID " << pid << std::endl;
 
     return true;
@@ -153,7 +200,11 @@ void JunctionD::monitorInstances() {
             pid_t ret = waitpid(it->second.pid, &status, WNOHANG);
             if (ret > 0) {
                 std::cout << "[junctiond] Instance " << it->second.name << " terminated." << std::endl;
-                it = statusMap.erase(it);
+                if (ret > 0) {
+                    std::cout << "[junctiond] Instance " << it->second.name << " terminated." << std::endl;
+                    it->second.running = false;   // mark as terminated
+                    ++it;                          // DO NOT ERASE HERE
+                }
             } else {
                 ++it;
             }
