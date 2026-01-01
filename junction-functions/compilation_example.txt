@@ -1,5 +1,0 @@
-g++ -O3 distilbert_infer.cpp \
-    -Ionnxruntime-linux-x64-1.23.2/include \
-    -Lonnxruntime-linux-x64-1.23.2/lib \
-    -lonnxruntime \
-    -o distilbert_infer
