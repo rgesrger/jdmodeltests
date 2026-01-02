@@ -23,7 +23,7 @@ RUN wget https://github.com/microsoft/onnxruntime/releases/download/v1.16.3/onnx
 RUN mkdir -p /app /action
 
 # Copy the compiled model binary and ONNX model into the container
-COPY junction-functions/distilgpt2/distilgpt2_infer /app/distilgpt2_infer
+COPY junction-functions/distilgpt2/build/distilgpt2_infer /app/distilgpt2_infer
 COPY models/distilgpt2.onnx /app/distilgpt2.onnx
 COPY dockerfiles/exec.sh /action/exec
 
