@@ -4,10 +4,20 @@ FROM ubuntu:20.04
 # Avoid prompts during install
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install minimal dependencies
+# Install minimal dependencies + wget, tar, libgomp for ONNX Runtime
 RUN apt-get update && apt-get install -y \
     libstdc++6 \
+    libgomp1 \
+    wget \
+    tar \
     && rm -rf /var/lib/apt/lists/*
+
+# Download and install ONNX Runtime shared library
+RUN wget https://github.com/microsoft/onnxruntime/releases/download/v1.16.3/onnxruntime-linux-x64-1.16.3.tgz \
+    && tar -xzf onnxruntime-linux-x64-1.16.3.tgz \
+    && cp onnxruntime-linux-x64-1.16.3/lib/libonnxruntime.so.1.16.3 /usr/lib/ \
+    && ldconfig \
+    && rm -rf onnxruntime-linux-x64-1.16.3*
 
 # Create directories for the binary and OpenWhisk action
 RUN mkdir -p /app /action
