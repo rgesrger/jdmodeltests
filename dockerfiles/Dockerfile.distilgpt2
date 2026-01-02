@@ -1,0 +1,19 @@
+FROM ubuntu:22.04
+
+# Install deps (ONNX Runtime CPU, libstdc++ etc.)
+RUN apt-get update && apt-get install -y \
+    libonnxruntime1 \
+    libstdc++6 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy binary + model
+COPY ../junction-functions/distilgpt2/distilgpt2_infer /app/distilgpt2_infer
+COPY ../models/distilgpt2.onnx   /app/distilgpt2.onnx
+
+# Make binary executable
+RUN chmod +x /app/distilgpt2_infer
+
+# Entry point: run inference with the model
+ENTRYPOINT ["/app/distilgpt2_infer", "/app/distilgpt2.onnx"]
