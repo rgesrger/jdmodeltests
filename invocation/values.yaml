@@ -1,0 +1,30 @@
+# updated-values.yaml
+
+invoker:
+  containerFactory:
+    impl: kubernetes
+    kubernetes:
+      replicaCount: 1
+      resources:
+        requests:
+          memory: 2Gi
+          cpu: 0.5
+        limits:
+          memory: 4Gi
+          cpu: 1
+
+k8s:
+  persistence:
+    enabled: false
+
+nginx:
+  httpsNodePort: 31001
+
+scheduler:
+  enabled: false
+
+whisk:
+  ingress:
+    apiHostName: 10.10.1.1
+    apiHostPort: 31001
+    type: NodePort
