@@ -4,16 +4,15 @@ set -e
 echo "[DEBUG] /action/exec started"
 echo "[DEBUG] CWD: $(pwd)"
 echo "[DEBUG] /app contents:"
-ls -l /app
+ls -lh /app
 
-# Read JSON input from OpenWhisk
-INPUT=$(cat)
-echo "[DEBUG] Received input JSON: $INPUT"
+# Skip stdin for testing
+# INPUT=$(cat)
+# echo "[DEBUG] Received input JSON: $INPUT"
 
-# Run the model
+echo "[DEBUG] Running model..."
 OUTPUT=$(/app/distilgpt2_infer /app/distilgpt2.onnx)
-echo "[DEBUG] Model output: $OUTPUT"
+echo "[DEBUG] Model finished"
 
-# Wrap output in JSON for OpenWhisk
+# Wrap result in JSON
 echo "{\"result\": \"$OUTPUT\"}"
-echo "[DEBUG] /action/exec finished"
