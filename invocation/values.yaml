@@ -1,17 +1,19 @@
-# updated-values.yaml
+# values.yaml
 
 invoker:
   containerFactory:
     impl: kubernetes
-    kubernetes:
-      replicaCount: 1
-      resources:
-        requests:
-          memory: 2Gi
-          cpu: 0.5
-        limits:
-          memory: 4Gi
-          cpu: 1
+  # This sets the RAM for the Invoker Pod itself
+  resources:
+    requests:
+      memory: "2Gi"
+      cpu: "0.5"
+    limits:
+      memory: "5Gi" # Increased this to 5Gi to safely hold a 2Gi action + Invoker overhead
+      cpu: "1.5"
+  # This sets the 'budget' the Invoker can spend on actions
+  containerPool:
+    userMemory: "4096m"
 
 k8s:
   persistence:
