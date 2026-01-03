@@ -9,7 +9,7 @@ invoker:
       memory: "2Gi"
       cpu: "0.5"
     limits:
-      memory: "5Gi" # Increased this to 5Gi to safely hold a 2Gi action + Invoker overhead
+      memory: "5Gi" 
       cpu: "1.5"
   # This sets the 'budget' the Invoker can spend on actions
   containerPool:
@@ -30,3 +30,10 @@ whisk:
     apiHostName: 10.10.1.1
     apiHostPort: 31001
     type: NodePort
+  # THIS IS THE CRITICAL ADDITION
+  limits:
+    actions:
+      memory:
+        max: "2048m"   # Allows the Controller to accept 2GB actions
+        min: "128m"
+        std: "256m"
