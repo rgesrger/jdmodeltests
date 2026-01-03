@@ -1,4 +1,5 @@
 #!/bin/sh
+echo "start running"
 set -e
 
 # echo "[DEBUG] /action/exec start"
