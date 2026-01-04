@@ -1,0 +1,36 @@
+# Use the same OS version you compiled on to ensure compatibility (glibc)
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Added libgomp1 (Required for ONNX Runtime OpenMP support)
+RUN apt-get update && apt-get install -y \
+    wget \
+    ca-certificates \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Download, extract, and install ONNX Runtime globally to /usr/lib
+RUN wget -q https://github.com/microsoft/onnxruntime/releases/download/v1.16.3/onnxruntime-linux-x64-1.16.3.tgz \
+    && tar -xzf onnxruntime-linux-x64-1.16.3.tgz \
+    && cp onnxruntime-linux-x64-1.16.3/lib/libonnxruntime.so.1.16.3 /usr/lib/ \
+    && ln -s /usr/lib/libonnxruntime.so.1.16.3 /usr/lib/libonnxruntime.so \
+    && ldconfig \
+    && rm -rf onnxruntime-linux-x64-1.16.3*
+
+# Create app directory (and action directory if needed later)
+RUN mkdir -p /app /action
+
+# 1. Copy your compiled binary
+COPY junction-functions/distilbert/build/distilbert_infer /app/distilbert_infer
+
+# 2. Copy the model
+COPY junction-functions/distilbert/build/distilbert.onnx /app/distilbert.onnx
+
+# 3. Make the binary executable
+RUN chmod +x /app/distilbert_infer
+
+# 4. Set the entrypoint
+ENTRYPOINT ["/app/distilbert_infer"]
