@@ -72,4 +72,17 @@ echo "You can now invoke OpenWhisk actions via:"
 echo "  http://127.0.0.1:$NODEPORT/api/v1/namespaces/_/actions/<ACTION_NAME>?blocking=true"
 echo "Authorization header (Base64): $ENCODED_AUTH"
 
+# increase memory usage
+# kubectl set env statefulset/owdev-controller -n openwhisk \
+#   JAVA_TOOL_OPTIONS="-Dwhisk.limits.actions.memory.max=2048m -Dwhisk.memory.max=2048m" \
+#   CONFIG_whisk_memory_max=2048m
+
+
+# more setup
+wsk property set --apihost http://10.10.1.1:30080
+AUTH_KEY=$(kubectl get secret -n openwhisk owdev-whisk.auth \
+  -o jsonpath='{.data.system}' | base64 --decode)
+
+echo "AUTH_KEY=${AUTH_KEY}"
+echo "APIHOST: http://10.10.1.1:30080"
 echo "Script finished!"
