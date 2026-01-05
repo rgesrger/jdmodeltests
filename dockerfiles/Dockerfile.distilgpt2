@@ -1,36 +1,40 @@
-# Use a lightweight Ubuntu base
-FROM ubuntu:20.04
+# Use Ubuntu 22.04 (Matches your compilation environment)
+FROM ubuntu:22.04
 
-# Avoid prompts during install
+# Prevent interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install minimal dependencies + wget, tar, libgomp for ONNX Runtime
+# 1. Install dependencies
+#    libgomp1 is required for ONNX Runtime concurrency
 RUN apt-get update && apt-get install -y \
-    libstdc++6 \
-    libgomp1 \
     wget \
     tar \
+    libgomp1 \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Download and install ONNX Runtime shared library
-RUN wget https://github.com/microsoft/onnxruntime/releases/download/v1.16.3/onnxruntime-linux-x64-1.16.3.tgz \
+# 2. Install ONNX Runtime Global (No LD_LIBRARY_PATH needed)
+#    We download, extract, move the lib to /usr/lib, and run ldconfig
+RUN wget -q https://github.com/microsoft/onnxruntime/releases/download/v1.16.3/onnxruntime-linux-x64-1.16.3.tgz \
     && tar -xzf onnxruntime-linux-x64-1.16.3.tgz \
     && cp onnxruntime-linux-x64-1.16.3/lib/libonnxruntime.so.1.16.3 /usr/lib/ \
+    && ln -s /usr/lib/libonnxruntime.so.1.16.3 /usr/lib/libonnxruntime.so \
     && ldconfig \
     && rm -rf onnxruntime-linux-x64-1.16.3*
 
-# Create directories for the binary and OpenWhisk action
+# 3. Create necessary directories
 RUN mkdir -p /app /action
 
-# Copy the compiled model binary and ONNX model into the container
-COPY junction-functions/distilgpt2/build/distilgpt2_infer /app/distilgpt2_infer
-COPY models/distilgpt2.onnx /app/distilgpt2.onnx
+# 4. Copy your specific DistilBERT files
+#    (Ensure these paths match your repo structure)
+COPY junction-functions/distilbert/build/distilbert_infer /app/distilbert_infer
+COPY junction-functions/distilbert/build/distilbert.onnx /app/distilbert.onnx
+
+# 5. Copy your wrapper script
 COPY dockerfiles/exec.sh /action/exec
 
-# Copy wrapper script that OpenWhisk will call
+# 6. Make everything executable
+RUN chmod +x /app/distilbert_infer /action/exec
 
-# Make everything executable
-RUN chmod +x /app/distilgpt2_infer /action/exec
-
-# Set OpenWhisk entrypoint
+# 7. Set the OpenWhisk entrypoint
 CMD ["/action/exec"]

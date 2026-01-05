@@ -12,7 +12,7 @@ ls -lh /app
 # echo "[DEBUG] Received input JSON: $INPUT"
 
 # echo "[DEBUG] Running model..."
-OUTPUT=$(/app/distilgpt2_infer /app/distilgpt2.onnx)
+OUTPUT=$(/app/distilbert_infer /app/distilbert.onnx)
 echo "[DEBUG] Model finished"
 
 # Wrap result in JSON
