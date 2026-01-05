@@ -6,15 +6,21 @@ rm -rf site-packages tokenizer_config model.tflite action.zip
 mkdir site-packages
 
 echo "--- 2. Installing libraries into site-packages ---"
-# -t site-packages tells pip to put the code here instead of in your system folders
-pip install tflite-runtime transformers numpy -t site-packages/
+# Installing locally so we can bundle them in the zip
+pip install tflite-runtime transformers numpy tensorflow-cpu -t site-packages/
 
 echo "--- 3. Downloading and Converting DistilBERT to TFLite ---"
-# This python block creates the model and tokenizer files needed for the zip
+# This line tells the next command to look inside the folder we just made
+export PYTHONPATH=$PYTHONPATH:$(pwd)/site-packages
+
 python3 <<EOF
+import os
+import sys
+# Double-check path inside python
+sys.path.append(os.path.join(os.getcwd(), "site-packages"))
+
 from transformers import AutoTokenizer, TFAutoModelForSequenceClassification
 import tensorflow as tf
-import os
 
 model_id = "distilbert-base-uncased-finetuned-sst-2-english"
 
@@ -22,7 +28,7 @@ print("Downloading tokenizer...")
 tokenizer = AutoTokenizer.from_pretrained(model_id)
 tokenizer.save_pretrained("./tokenizer_config")
 
-print("Converting model (this stays under 100MB)...")
+print("Converting model (this may take 1-2 minutes)...")
 model = TFAutoModelForSequenceClassification.from_pretrained(model_id, from_pt=True)
 converter = tf.lite.TFLiteConverter.from_keras_model(model)
 converter.optimizations = [tf.lite.Optimize.DEFAULT]
@@ -33,7 +39,6 @@ with open("model.tflite", "wb") as f:
 EOF
 
 echo "--- 4. Creating action.zip ---"
-# This bundles everything OpenWhisk needs into one file
 zip -r action.zip __main__.py model.tflite tokenizer_config site-packages
 
 echo "--- SUCCESS ---"
