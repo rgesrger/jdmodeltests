@@ -5,48 +5,24 @@ echo "--- 1. Cleaning up ---"
 rm -rf site-packages tokenizer_config model.tflite action.zip
 mkdir site-packages
 
-echo "--- 2. Installing minimum libraries ---"
-# Only installing what is needed for the conversion
-pip install tflite-runtime transformers numpy tensorflow-cpu -t site-packages/
+echo "--- 2. Installing runtime only (No Torch/No TF) ---"
+# We only install the lightweight runtime and tokenizer
+pip install tflite-runtime tokenizers numpy -t site-packages/
 
-echo "--- 3. Converting TinyBERT to TFLite (Tiny & Fast) ---"
-export PYTHONPATH=$PYTHONPATH:$(pwd)/site-packages
-python3 <<EOF
-import os, sys
-sys.path.append(os.path.join(os.getcwd(), "site-packages"))
-from transformers import AutoTokenizer, TFAutoModelForSequenceClassification
-import tensorflow as tf
+echo "--- 3. Downloading Pre-converted Tiny Model ---"
+# We download the model and vocab directly using curl to avoid the 'torch' error
+curl -L https://huggingface.co/kimil79/tinybert-6l-768d-squad2-tflite/resolve/main/model.tflite -o model.tflite
 
-# Switching to TinyBERT - significantly smaller footprint
-model_id = "huawei-noah/TinyBERT_General_4L_312D"
+mkdir -p tokenizer_config
+curl -L https://huggingface.co/huawei-noah/TinyBERT_General_4L_312D/resolve/main/vocab.txt -o tokenizer_config/vocab.txt
 
-print("Downloading tiny tokenizer...")
-tokenizer = AutoTokenizer.from_pretrained(model_id)
-tokenizer.save_pretrained("./tokenizer_config")
-
-print("Downloading and converting TinyBERT...")
-model = TFAutoModelForSequenceClassification.from_pretrained(model_id, from_pt=True)
-converter = tf.lite.TFLiteConverter.from_keras_model(model)
-converter.optimizations = [tf.lite.Optimize.DEFAULT]
-tflite_model = converter.convert()
-
-with open("model.tflite", "wb") as f:
-    f.write(tflite_model)
-EOF
-
-echo "--- 4. Aggressive Scrubbing ---"
-# Remove the massive TensorFlow and other junk to save 200MB+
-cd site-packages
-rm -rf tensorflow* tensorboard* keras* google* _pywrap_tensorflow*
-rm -rf *.dist-info *.egg-info
-find . -name "__pycache__" -type d -exec rm -rf {} +
-find . -name "*.pyc" -delete
-# Strip the transformers library to only the base
-find . -name "tests" -type d -exec rm -rf {} +
-cd ..
+echo "--- 4. Creating Action Code ---"
+# Ensure __main__.py is ready (see below)
 
 echo "--- 5. Final Zip ---"
+# Aggressive cleanup of site-packages to save space
+find site-packages -name "__pycache__" -type d -exec rm -rf {} +
 zip -r action.zip __main__.py model.tflite tokenizer_config site-packages
 
 echo "--- SUCCESS ---"
-echo "Action size: $(du -h action.zip | cut -f1) (Target was < 48MB)"
+echo "Final Zip Size: $(du -h action.zip | cut -f1)"
